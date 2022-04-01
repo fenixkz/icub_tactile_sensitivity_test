@@ -1,0 +1,8 @@
+/home/fenixkz/robotology-superbuild/build/install/bin/my-project
+/home/fenixkz/robotology-superbuild/build/install/share/ICUBcontrib/applications/my-project-app.xml
+/home/fenixkz/robotology-superbuild/build/install/share/ICUBcontrib/applications/my-project-system.xml
+/home/fenixkz/robotology-superbuild/build/install/share/gazebo/models/my-box/model.config
+/home/fenixkz/robotology-superbuild/build/install/share/gazebo/models/my-box/model.sdf
+/home/fenixkz/robotology-superbuild/build/install/share/gazebo/models/my-table/model.config
+/home/fenixkz/robotology-superbuild/build/install/share/gazebo/models/my-table/model.sdf
+/home/fenixkz/robotology-superbuild/build/install/share/gazebo/worlds/robot.sdf
