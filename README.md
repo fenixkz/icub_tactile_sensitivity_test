@@ -23,9 +23,11 @@ $ ./my-project
 Also, we need to send commands through RPC, it can be done via terminal by:
 ```
 $ yarp rpc /service
-> upLeft
-> closeFingers
-> goRight
-> goLeft
-> touch
+>> upLeft
+>> closeFingers
+>> goRight
+>> goLeft
+>> touch
+>> stop
+>> start
 ```
