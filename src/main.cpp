@@ -7,6 +7,7 @@
 #include <yarp/dev/all.h>
 #include <yarp/sig/all.h>
 #include <yarp/math/Math.h>
+#include <yarp/os/Semaphore.h>
 
 using namespace std;
 using namespace yarp::os;
@@ -26,8 +27,13 @@ protected:
     int startup_ctxt_gaze;
     Vector x_init, o_init;
     RpcServer rpcPort;
-
-
+    int state;
+    int emerStop;
+    Semaphore sem;
+    Semaphore semControl;
+    IControlLimits   *ilim;
+    IControlMode     *imod;
+    IPositionControl *ipos;
     /***************************************************/
     void approachBox()
     {
@@ -62,7 +68,13 @@ protected:
         // go to the target :)
         // (in streaming)
         iarm->goToPose(xd,od);
-        // iarm->waitMotionDone(0.04);
+        bool done = false;
+        while(!done && !emerStop){
+          Time::delay(0.01);
+          semControl.wait();
+          iarm->checkMotionDone(&done);
+          semControl.post();
+        }
     }
 
     void moveLeft()
@@ -100,7 +112,13 @@ protected:
         // go to the target :)
         // (in streaming)
         iarm->goToPoseSync(xd,od);
-        // iarm->waitMotionDone(0.04);
+        bool done = false;
+        while(!done && !emerStop){
+          Time::delay(0.01);
+          semControl.wait();
+          iarm->checkMotionDone(&done);
+          semControl.post();
+        }
     }
 
     void moveIndex(){
@@ -118,7 +136,13 @@ protected:
       ienc->getEncoder(j,&enc);
       double target = enc + 2;
       ipos->positionMove(j,target);
-
+      bool done = false;
+      while(!done && !emerStop){
+        Time::delay(0.01);
+        semControl.wait();
+        ipos->checkMotionDone(&done);
+        semControl.post();
+      }
     }
 
     void leftHand(){
@@ -138,21 +162,23 @@ protected:
       od = yarp::math::dcm2axis(R);
       // go to the target :)
       // (in streaming)
+      semControl.wait();
       iarm->goToPose(xd,od);
-      // iarm->waitMotionDone(0.04);
+      semControl.post();
+
+      bool done = false;
+      while(!done && !emerStop){
+        Time::delay(0.01);
+        semControl.wait();
+        iarm->checkMotionDone(&done);
+        semControl.post();
+      }
     }
-    void reset(){
-      drvArmR.view(iarm);
-      iarm->goToPoseSync(x_init,o_init);
-      iarm->waitMotionDone(0.04);
-    }
+
+
 
     void moveFingers(const string &hand)
     {
-        // select the correct interface
-        IControlLimits   *ilim;
-        IControlMode     *imod;
-        IPositionControl *ipos;
         // IEncoders        *ienc;
         if (hand=="right")
         {
@@ -167,14 +193,10 @@ protected:
             drvHandL.view(ipos);
         }
 
-        // enforce [0,1] interval
-        // double fingers_closure_sat=std::min(1.0,std::max(0.0,fingers_closure));
         double min, max, target;
         VectorOf<double> targets;
         VectorOf<int> joints {8,9,10,13,14,15};
-        // move each finger first:
-        // if min_j and max_j are the minimum and maximum bounds of joint j,
-        // then we should move to min_j+fingers_closure_sat*(max_j-min_j)
+
         for (size_t i=0; i<joints.size(); i++)
         {
             int j=joints[i];
@@ -190,20 +212,52 @@ protected:
             ipos->positionMove(j,target);
             // FILL IN THE CODE
         }
-        // double enc;
-        // wait until all fingers have attained their set-points
-        // for (size_t i=0; i<joints.size(); i++)
-        // {
-        //   int j=joints[i];
-        //   ipos->checkMotionDone(&done);
-        // }
-        // FILL IN THE CODE
+
         bool done = false;
-        while(!done){
-          Time::delay(0.1);
+        while(!done && !emerStop){
+          Time::delay(0.01);
+          semControl.wait();
           ipos->checkMotionDone(&done);
+          semControl.post();
         }
 
+    }
+
+    void stop(){
+      semControl.wait();
+
+      drvArmL.view(iarm);
+      iarm->stopControl();
+      drvArmL.close();
+
+      drvArmR.view(iarm);
+      iarm->stopControl();
+      drvArmR.close();
+
+      drvHandL.view(ipos);
+      ipos->stop();
+      drvHandL.close();
+      semControl.post();
+    }
+
+
+    bool reset(){
+      string robot="icubSim";
+
+      if (!openCartesian(robot,"right_arm"))
+          return false;
+
+      if(!openCartesian(robot, "left_arm"))
+          return false;
+
+      if(!openHand(robot, "left_arm"))
+          return false;
+      // save startup contexts
+      drvArmR.view(iarm);
+      iarm->storeContext(&startup_ctxt_arm_right);
+      drvArmL.view(iarm);
+      iarm->storeContext(&startup_ctxt_arm_left);
+      return true;
     }
 
     /***************************************************/
@@ -292,7 +346,8 @@ public:
 
         rpcPort.open("/service");
         attach(rpcPort);
-
+        state = -1;
+        emerStop = 0;
         return true;
     }
 
@@ -321,46 +376,52 @@ public:
 
         if (cmd=="goRight")
         {
-
-            yInfo() << "Approaching the box";
-            approachBox();
-            yInfo() << "Done";
-            Vector x,o;
-            drvArmR.view(iarm);
-            iarm->getPose(x,o);
-            fprintf(stdout, "Current x: %f, y: %f, z: %f\n", x[0], x[1], x[2]);
-            // yInfo() << "Current x: %f, y: %f, z: %f" << x[0], x[1], x[2];
+            sem.wait();
+            state = 1;
+            sem.post();
             reply.addString("Done");
-            // we assume the robot is not moving now
-        }
-        else if (cmd == "reset"){
-          yInfo() << "Resetting";
-          reset();
-          yInfo() << "Done";
-          reply.addString("Resetted");
         }
         else if (cmd == "upLeft"){
-          yInfo() << "Moving the left hand";
-          leftHand();
-          yInfo() << "Done";
+          sem.wait();
+          state = 2;
+          sem.post();
           reply.addString("Done");
         }
         else if(cmd == "closeFingers"){
-          yInfo() << "Moving the fingers of the left hand";
-          moveFingers("left");
-          yInfo() << "Done";
+          sem.wait();
+          state = 3;
+          sem.post();
           reply.addString("Done");
         }
         else if(cmd == "goLeft"){
-          yInfo() << "Moving the left hand";
-          moveLeft();
-          yInfo() << "Done";
+          sem.wait();
+          state = 4;
+          sem.post();
           reply.addString("Done");
         }
         else if(cmd == "touch"){
-          yInfo() << "Moving the index finger";
-          moveIndex();
-          yInfo() << "Done";
+          sem.wait();
+          state = 5;
+          sem.post();
+          reply.addString("Done");
+        }
+        else if(cmd == "stop"){
+
+          emerStop = 1;
+          yInfo() << "Stop has been pressed";
+          stop();
+          sem.wait();
+          state = -1;
+          sem.post();
+          reply.addString("Done");
+        }
+        else if(cmd == "start"){
+          sem.wait();
+          state = -1;
+          sem.post();
+          yInfo() << "Reset has been pressed";
+          emerStop = 0;
+          reset();
           reply.addString("Done");
         }
         else
@@ -379,6 +440,43 @@ public:
     /***************************************************/
     bool updateModule()
     {
+        switch(state){
+          case 1: // goRight
+            yInfo() << "Approaching the box";
+            approachBox();
+            yInfo() << "Done";
+
+            break;
+          case 2: // upLeft
+            yInfo() << "Moving the left hand";
+            leftHand();
+            yInfo() << "Done";
+
+            break;
+          case 3: // closeFingers
+            yInfo() << "Moving the fingers of the left hand";
+            moveFingers("left");
+            yInfo() << "Done";
+
+            break;
+          case 4: // goLeft
+            yInfo() << "Moving the left hand";
+            moveLeft();
+            yInfo() << "Done";
+
+            break;
+          case 5: // Touch
+            yInfo() << "Moving the index finger";
+            moveIndex();
+            yInfo() << "Done";
+
+            break;
+          default:
+            break;
+        }
+        sem.wait();
+        state = -1;
+        sem.post();
         return true;
     }
 };
