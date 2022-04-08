@@ -34,6 +34,8 @@ protected:
     IControlLimits   *ilim;
     IControlMode     *imod;
     IPositionControl *ipos;
+    Vector poseR, poseL;
+    double trajectory_time, period;
     /***************************************************/
     void approachBox()
     {
@@ -47,15 +49,12 @@ protected:
         newDof[2] = 1;
         iarm->setDOF(newDof,curDof);
 
-        // enable all dofs but the roll of the torso
         Vector x,o, xd(3), od(4);
         iarm->getPose(x,o);
-        // xd[0]=x[0];
-        // xd[1]=x[1];
-        // xd[2]=x[2];
-        xd[0] = x[0] + 0.02;
-        xd[1] = 0.201 - 0.08 - 0.1;
-        xd[2] = -0.0733 - 0.02;
+
+        xd[0] = poseR[0];
+        xd[1] = poseR[1];
+        xd[2] = poseR[2];
 
         Vector o1(4), o2(4);
         Matrix R1, R2, R;
@@ -65,11 +64,11 @@ protected:
         R2=yarp::math::axis2dcm(o2);
         R = R1 * R2;
         od = yarp::math::dcm2axis(R);
-        // go to the target :)
-        // (in streaming)
-        iarm->goToPose(xd,od);
+
+        iarm->goToPose(xd, od, trajectory_time);
         bool done = false;
-        while(!done && !emerStop){
+        double t0=Time::now();
+        while(!done && (Time::now() - t0 < 10.0) && !emerStop){
           Time::delay(0.01);
           semControl.wait();
           iarm->checkMotionDone(&done);
@@ -95,9 +94,9 @@ protected:
         // xd[0]=x[0];
         // xd[1]=x[1];
         // xd[2]=x[2];
-        xd[0] = -0.283348 + 0.08;
-        xd[1] = 0.201 - 0.08 - 0.146;
-        xd[2] = -0.0733 - 0.02;
+        xd[0] = poseL[0];
+        xd[1] = poseL[1];
+        xd[2] = poseL[2];
 
         Vector o1(4), o2(4), o3(4);
         Matrix R1, R2, R3, R;
@@ -111,9 +110,10 @@ protected:
         od = yarp::math::dcm2axis(R);
         // go to the target :)
         // (in streaming)
-        iarm->goToPoseSync(xd,od);
+        iarm->goToPoseSync(xd,od, trajectory_time);
         bool done = false;
-        while(!done && !emerStop){
+        double t0=Time::now();
+        while(!done && (Time::now() - t0 < 10.0) && !emerStop){
           Time::delay(0.01);
           semControl.wait();
           iarm->checkMotionDone(&done);
@@ -137,7 +137,8 @@ protected:
       double target = enc + 2;
       ipos->positionMove(j,target);
       bool done = false;
-      while(!done && !emerStop){
+      double t0=Time::now();
+      while(!done && (Time::now() - t0 < 10.0) && !emerStop){
         Time::delay(0.01);
         semControl.wait();
         ipos->checkMotionDone(&done);
@@ -163,11 +164,12 @@ protected:
       // go to the target :)
       // (in streaming)
       semControl.wait();
-      iarm->goToPose(xd,od);
+      iarm->goToPose(xd,od, trajectory_time);
       semControl.post();
 
       bool done = false;
-      while(!done && !emerStop){
+      double t0=Time::now();
+      while((!done || (Time::now() - t0 < 10.0)) && !emerStop){
         Time::delay(0.01);
         semControl.wait();
         iarm->checkMotionDone(&done);
@@ -214,7 +216,8 @@ protected:
         }
 
         bool done = false;
-        while(!done && !emerStop){
+        double t0=Time::now();
+        while(!done && (Time::now() - t0 < 20.0) && !emerStop){
           Time::delay(0.01);
           semControl.wait();
           ipos->checkMotionDone(&done);
@@ -328,7 +331,22 @@ public:
     bool configure(ResourceFinder &rf)
     {
         string robot=rf.check("robot",Value("icubSim")).asString();
+        // poseR = rf.findGroup("hand right").find("x").asFloat32();
+        poseR.resize(3);
 
+        poseR[0] = rf.findGroup("right").check("x", Value(-0.283801)).asFloat32();
+        poseR[1] = rf.findGroup("right").check("y", Value(0.021)).asFloat32();
+        poseR[2] = rf.findGroup("right").check("z", Value(-0.0933)).asFloat32();
+
+        poseL.resize(3);
+        poseL[0] = rf.findGroup("left").check("x", Value(-0.203348)).asFloat32();
+        poseL[1] = rf.findGroup("left").check("y", Value(-0.025)).asFloat32();
+        poseL[2] = rf.findGroup("left").check("z", Value(-0.0933)).asFloat32();
+        trajectory_time = rf.check("trajectory_time", Value(0.0)).asFloat32();
+        period = rf.check("frequency", Value(1.0)).asFloat32();
+        // fprintf(stdout, "%f, %f, %f\n", poseR[0], poseR[1], poseR[2]);
+        // fprintf(stdout, "%f, %f, %f\n", poseL[0], poseL[1], poseL[2]);
+        //
         if (!openCartesian(robot,"right_arm"))
             return false;
 
@@ -343,7 +361,8 @@ public:
         drvArmL.view(iarm);
         iarm->storeContext(&startup_ctxt_arm_left);
 
-
+        double tmp = Time::now();
+        yInfo() << tmp;
         rpcPort.open("/service");
         attach(rpcPort);
         state = -1;
@@ -434,7 +453,7 @@ public:
     /***************************************************/
     double getPeriod()
     {
-        return 1.0;
+        return period;
     }
 
     /***************************************************/
