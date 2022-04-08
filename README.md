@@ -18,7 +18,7 @@ $ yarpmanager
 In _yarpmanager_ launch in tactile_sensitivity_system all the processes. After that, run the executable of main.cpp either in the manager or in
 ```
 $ cd build/bin/
-$ ./my-project
+$ ./my-project --from ../../config.ini
 ```
 Also, we need to send commands through RPC, it can be done via terminal by:
 ```
