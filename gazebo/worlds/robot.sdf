@@ -21,7 +21,7 @@
     </include>
     <include>
       <uri>model://my-box</uri>
-      <pose>-0.288232 0.0 0.53 0 0 0</pose>
+      <pose>-0.288232 0.0 0.55 0 0 -1.57</pose>
     </include>
     <model name="iCub">
       <include>
