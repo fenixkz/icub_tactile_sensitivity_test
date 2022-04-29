@@ -9,13 +9,13 @@
 #include <yarp/math/Math.h>
 #include <mutex>
 #include <unistd.h>
-
+#include <thread>
 using namespace std;
 using namespace yarp::os;
 using namespace yarp::dev;
 using namespace yarp::sig;
 using namespace yarp::math;
-
+using namespace literals::chrono_literals;
 
 /***************************************************/
 class CtrlModule: public RFModule
@@ -37,7 +37,7 @@ protected:
     IControlLimits   *ilim;
     IControlMode     *imod;
     IPositionControl *ipos;
-    vector<double> poseR, poseL, up_left, homeR, homeL, homeT;
+    vector<double> poseR, poseL, up_left, homeR, homeL, homeT, fingers_target, fingers_joint;
     double trajectory_time, period;
     void *IControl;
     double t0 = Time::now();
@@ -213,7 +213,7 @@ protected:
             drvHandL.view(ipos);
         }
 
-        double min, max, target;
+        double target;
         VectorOf<int> middle {13,14};
         VectorOf<int> thumb {8,9,10};
         int pinky = 15;
@@ -221,9 +221,11 @@ protected:
         for (size_t i=0; i<middle.size(); i++)
         {
               int j=middle[i];
-              ilim->getLimits(j,&min,&max);
+              // ilim->getLimits(j,&min,&max);
+              // yInfo() << "Joint %d, max %f" << j, max;
+              // fprintf(stdout, "Joint %d, max %f\n", j, max);
               imod->setControlMode(j,VOCAB_CM_POSITION);
-              target = max;
+              target = fingers_target[i];
               // set up the speed in [deg/s]
               ipos->setRefSpeed(j,30.0);
               // set up max acceleration in [deg/s^2]
@@ -235,9 +237,10 @@ protected:
           Time::delay(0.1);
           ipos->checkMotionDone(&done);
         }
-        ilim->getLimits(pinky, &min, &max);
+        // ilim->getLimits(pinky, &min, &max);
         imod->setControlMode(pinky,VOCAB_CM_POSITION);
-        target = max;
+        target = fingers_target[2];
+        // fprintf(stdout, "Joint %d, max %f\n", pinky, max);
         ipos->setRefSpeed(pinky,30.0);
         ipos->setRefAcceleration(pinky,50.0);
         ipos->positionMove(pinky,target);
@@ -250,13 +253,14 @@ protected:
         for (size_t i=0; i<thumb.size(); i++)
         {
               int j=thumb[i];
-              ilim->getLimits(j,&min,&max);
+              // ilim->getLimits(j,&min,&max);
               imod->setControlMode(j,VOCAB_CM_POSITION);
-              target = max;
+              target = fingers_target[i+3];
               // set up the speed in [deg/s]
               ipos->setRefSpeed(j,30.0);
               // set up max acceleration in [deg/s^2]
               ipos->setRefAcceleration(j,50.0);
+              // fprintf(stdout, "Joint %d, max %f\n", j, max);
               ipos->positionMove(j,target);
         }
     }
@@ -461,6 +465,16 @@ public:
           homeT.at(i) = item_v.asFloat32();
         }
 
+        b = rf.findGroup("fingers").find("target").asList();
+        fingers_target.resize(b->size());
+        for (size_t i = 0; i < b->size(); i++){
+          Value item_v = b->get(i);
+          if (item_v.isNull()){
+            cout << "Error: " << i << " is null" << endl;
+          }
+          fingers_target.at(i) = item_v.asFloat32();
+        }
+
         trajectory_time = rf.check("trajectory_time", Value(10.0)).asFloat32();
         period = rf.check("frequency", Value(1.0)).asFloat32();
         // fprintf(stdout, "%f, %f, %f\n", poseR[0], poseR[1], poseR[2]);
@@ -610,14 +624,22 @@ public:
             setState(State::idle);
           }else if (localState == State::home){
             yInfo() << "Moving to the home position";
+            drvArmL.view(iarm);
+            iarm->stopControl();
+
+            drvArmR.view(iarm);
+            iarm->stopControl();
             moveShoulders("right");
-            usleep(1500000);
+            // std::this_thread::sleep_for(1.5s);;
+            yInfo() << "Now";
+            std::this_thread::sleep_for(2s);
+            yInfo() << "Now + 2s";
             moveShoulders("left");
-            usleep(1500000);
+            std::this_thread::sleep_for(2s);;
             goHomeTorso();
-            usleep(1500000);
+            std::this_thread::sleep_for(2s);;
             goHomeHands("left");
-            usleep(1500000);
+            std::this_thread::sleep_for(2s);;
             goHomeHands("right");
             t0=Time::now();
             cartesian = false;
