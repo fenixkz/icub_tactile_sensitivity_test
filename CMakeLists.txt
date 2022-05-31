@@ -21,19 +21,20 @@ icubcontrib_set_default_prefix()
 
 add_subdirectory(gazebo)
 
-# world
-# target_compile_definitions(${PROJECT_NAME} PRIVATE _USE_MATH_DEFINES)
-# target_include_directories(${PROJECT_NAME} PRIVATE ${GAZEBO_INCLUDE_DIRS})
-# target_link_libraries(${PROJECT_NAME} PRIVATE ${GAZEBO_LIBRARIES} ${YARP_LIBRARIES})
-# install(TARGETS ${PROJECT_NAME} DESTINATION bin)
-
 # assignment
 include_directories(${CMAKE_SOURCE_DIR}/src)
+# Controller to move to the box
 add_executable(${PROJECT_NAME} ${CMAKE_SOURCE_DIR}/src/main.cpp
                                )
 target_compile_definitions(${PROJECT_NAME} PRIVATE _USE_MATH_DEFINES)
 target_link_libraries(${PROJECT_NAME} ${YARP_LIBRARIES})
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)
+# Force controller
+add_executable(force ${CMAKE_SOURCE_DIR}/src/force.cpp
+                               )
+target_compile_definitions(force PRIVATE _USE_MATH_DEFINES)
+target_link_libraries(force ${YARP_LIBRARIES})
+install(TARGETS force DESTINATION bin)
 
 # generate ad-hoc project to perform "make uninstall"
 icubcontrib_add_uninstall_target()
