@@ -28,7 +28,7 @@ protected:
     int startup_ctxt_gaze;
     Vector x_init, o_init;
     RpcServer rpcPort;
-    enum class State { upLeft, closeFingers, goRight, goLeft, touch, home, idle, stop, ready};
+    enum class State { upLeft, closeFingers, goRight, goLeft, touch, periodicMovement, home, idle, stop, ready};
     State state;
     int emerStop;
     mutex mutexState;
@@ -38,9 +38,10 @@ protected:
     IControlMode     *imod;
     IPositionControl *ipos;
     vector<double> poseR, poseL, up_left, homeR, homeL, homeT, fingers_target, fingers_joint;
-    double trajectory_time, period;
+    double trajectory_time, period, ampl, w;
     void *IControl;
     double t0 = Time::now();
+    double tS = Time::now();
     bool cartesian;
     /***************************************************/
     void approachBox()
@@ -73,6 +74,30 @@ protected:
 
         iarm->goToPose(xd, od, trajectory_time);
 
+    }
+
+    bool periodicMov(){
+      drvArmL.view(iarm);
+      Vector o1(4), o2(4), o3(4), xg(4), od(4);
+      Matrix R1, R2, R3, R;
+      o1[0] = 0.0; o1[1] = 1.0; o1[2] = 0.0; o1[3] = M_PI;
+      o2[0] = 1.0; o2[1] = 0.0; o2[2] = 0.0; o2[3] = M_PI/2;
+      o3[0] = 0.0; o3[1] = 0.0; o3[2] = 1.0; o3[3] = M_PI/6;
+      R1=yarp::math::axis2dcm(o1);
+      R2=yarp::math::axis2dcm(o2);
+      R3=yarp::math::axis2dcm(o3);
+      R = R1 * R2 * R3;
+      od = yarp::math::dcm2axis(R);
+      // snprintf( buffer, sizeof(buffer), "xA: %f; ", tmp[2]);
+      // myfile << buffer;
+      xg[1] = poseL[1];
+      xg[0] = poseL[0];
+      double t = Time::now();
+      xg[2] = poseL[2] + ampl*sin(2.0 * M_PI * 1/w * (t-tS));
+      iarm->goToPose(xg,od);
+      // snprintf( buffer, sizeof(buffer), "xG: %f\n", xg[2]);
+      // myfile << buffer;
+      return true;
     }
 
     void moveLeft()
@@ -477,11 +502,8 @@ public:
 
         trajectory_time = rf.check("trajectory_time", Value(10.0)).asFloat32();
         period = rf.check("frequency", Value(1.0)).asFloat32();
-        // fprintf(stdout, "%f, %f, %f\n", poseR[0], poseR[1], poseR[2]);
-        // fprintf(stdout, "%f, %f, %f\n", poseL[0], poseL[1], poseL[2]);
-        // fprintf(stdout, "%f, %f, %f\n", homeR[0], homeR[1], homeR[2]);
-        // fprintf(stdout, "%f, %f, %f\n", homeL[0], homeL[1], homeL[2]);
-        //
+        ampl = rf.check("amplitude", Value(0.05)).asFloat32();
+        w = rf.check("omega", Value(3.0)).asFloat32();
         if (!openCartesian(robot,"right_arm"))
             return false;
 
@@ -496,14 +518,10 @@ public:
 
         if(!openTorso(robot))
             return false;
-        // save startup contexts
         drvArmR.view(iarm);
         iarm->storeContext(&startup_ctxt_arm_right);
         drvArmL.view(iarm);
         iarm->storeContext(&startup_ctxt_arm_left);
-        // Vector x,o;
-        // iarm->getPose(x,o);
-        // fprintf(stdout, "Left hand %f, %f, %f\n", x[0], x[1], x[2]);
         rpcPort.open("/service");
         attach(rpcPort);
         state = State::ready;
@@ -573,6 +591,12 @@ public:
           yInfo() << "Reset has been pressed";
           // reset();
           reply.addString("Done");
+        }else if (cmd=="periodic"){
+            tS = Time::now();
+            setState(State::periodicMovement);
+            reply.addString("Done");
+        }else if (cmd == "pause"){
+            setState(State::ready);
         }
         else
             // the father class already handles the "quit" command
@@ -622,6 +646,9 @@ public:
             t0=Time::now();
             cartesian = false;
             setState(State::idle);
+          }else if (localState == State::periodicMovement){
+              periodicMov();
+              yInfo() << "Up and down again";
           }else if (localState == State::home){
             yInfo() << "Moving to the home position";
             drvArmL.view(iarm);

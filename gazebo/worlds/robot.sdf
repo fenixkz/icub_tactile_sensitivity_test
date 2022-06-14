@@ -19,10 +19,10 @@
       <uri>model://my-table</uri>
       <pose>-0.530772 0 0 0 0 -1.57</pose>
     </include>
-    <include>
+    <!-- <include>
       <uri>model://my-box</uri>
       <pose>-0.288232 0.0 0.55 0 0 -1.57</pose>
-    </include>
+    </include> -->
     <model name="iCub">
       <include>
         <uri>model://iCubGazeboV2_5_visuomanip</uri>

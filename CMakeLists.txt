@@ -1,5 +1,6 @@
 # requires minimum cmake version
 cmake_minimum_required(VERSION 3.5)
+set(CMAKE_CXX_STANDARD 11)
 
 # produce the cmake var PROJECT_NAME
 project(my-project)
