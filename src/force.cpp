@@ -99,10 +99,13 @@ protected:
       // if sign(error, control output) && in saturation, then turn off the integral
       if (aw_enabled && ((saturation == 1 && e > 0) || (saturation == -1 && e < 0))){
         i_on = 0;
+      }else{
+        i_on = 1;
       }
 
       ipwm->setRefDutyCycle(j, target);
-      yInfo() << "Error: " << e << " Target: " << target << " Mean: " << mean;
+      // yInfo() << "Error: " << e << " Target: " << target << " Mean: " << mean;
+      yInfo() << "Integral error: " << igain * e_i;
     }
 
     double quintic(double t_init){
