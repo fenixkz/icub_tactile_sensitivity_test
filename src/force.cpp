@@ -36,7 +36,7 @@ protected:
     int startup_ctxt_gaze;
     Vector x_init, o_init;
     RpcServer rpcPort;
-    enum class State { prepare, reference, idle, stop, ready};
+    enum class State { prepare, home_index, reference, idle, stop, ready};
     State state;
     int emerStop;
     mutex mutexState;
@@ -46,17 +46,28 @@ protected:
     IControlMode     *imod;
     IPositionControl *ipos;
     double trajectory_time, period, dt;
-    vector<double> xL, data;
+    vector<double> xL, data, data_offset, data_filtered;
     double t0 = Time::now();
     bool cartesian;
     ofstream myfile;
     char buffer[ 64 ];
     BufferedPort<yarp::sig::Vector> tactPort, dataPort;
-    int ref, scale, i_on, n_called, aw_enabled;
+    int ref, scale, i_on, n_called, aw_enabled, k_times, mean_mod;
     double mean, max, r, r_, target, igain, e_i;
     /***************************************************/
 
-
+    vector<double> lowPass(vector<double> x, vector<double> y){
+      double cutoff = 0.1;
+      double rc = 1/(2*M_PI*cutoff); // cutoff freq of 30Hz
+      double dt = 0.01;
+      double alpha = dt/(rc+dt);
+      vector<double> result;
+      result.resize(12);
+      for (int i = 0; i < 12; i++){
+        result.at(i) = alpha * x.at(i) + (1-alpha) * y.at(i);
+      }
+      return result;
+    }
 
     State getState(){
       mutexState.lock();
@@ -108,6 +119,20 @@ protected:
       yInfo() << "Integral error: " << igain * e_i;
     }
 
+    int index_home(){
+      drvHandL.view(ipos);
+      int j = 11;
+      imod->setControlMode(j, VOCAB_CM_POSITION);
+      double target = 0;
+      ipos->positionMove(j, target);
+      bool done = false;
+      while (!done){
+          std::this_thread::sleep_for(0.1s);;
+          ipos->checkMotionDone(&done);
+      }
+      return 1;
+    }
+
     double quintic(double t_init){
       double a0 = r_;
       double a3 = 10 * (ref - r_) / pow(dt, 3);
@@ -142,15 +167,30 @@ protected:
       if (tactData != nullptr){
         data.resize(12);
         for (size_t i = 0; i < 12; i++){
-          data.at(i) = abs(255 - (*tactData)[i]);
+
+          if (k_times < 50){
+            data.at(i) = abs(255 - (*tactData)[i]);
+            data_offset.at(i) += data.at(i);
+          }else{
+            data.at(i) = abs(255 - (*tactData)[i]) - data_offset.at(i)/50;
+          }
         }
+        k_times++;
       }
       if (!data.empty()){
+        // cout << "Some";
+        data_filtered = lowPass(data, data_filtered);
         // mean = reduce(data.begin(), data.end()) / data.size();
-        // mean = data[1] + data[6] + data[9] + data[11];
-        // mean = mean / 4.0;
-        mean =  data[6];
-        max = *max_element(data.begin(), data.end());
+        if (mean_mod == 0){
+          mean = (data_filtered[1] + data_filtered[6]) + 0.5*(data_filtered[9] + data_filtered[8] + data_filtered[10]) + 0.25*(data_filtered[0] + data_filtered[7] + data_filtered[2] + data_filtered[5]);
+          mean = mean / 4.5;
+          mean = mean/100 * 255;
+        }else if(mean_mod == 1){
+          mean = 0.5*(data[1] + data[6]);
+        }else{
+          mean = data[6];
+        }
+        // max = *max_element(data.begin(), data.end());
         // yInfo() << "Index finger: max " << *max_element(data.begin(), data.end()) << " mean " << mean;
       }
       // std::stringstream result;
@@ -195,12 +235,14 @@ public:
         robot=rf.check("robot", Value("icubSim")).asString();
         igain = rf.check("igain", Value(0.01)).asFloat32();
         trajectory_time = rf.check("trajectory_time", Value(10.0)).asFloat32();
-        period = rf.check("frequency", Value(1.0)).asFloat32();
+        period = rf.check("period", Value(1.0)).asFloat32();
         scale = rf.check("scale", Value(1)).asInt32();
         aw_enabled = rf.check("aw_enabled", Value(1)).asInt32();
+        mean_mod = rf.check("mean_mod", Value(0)).asInt32();
+
         if(!openHand(robot, "left_arm"))
             return false;
-        // save startup contexts
+
         tactPort.open("/tactile");
         dataPort.open("/controllerData");
         // Network::connect("/icub/skin/left_hand", "/tactile");
@@ -213,8 +255,16 @@ public:
         r = 0;
         target = 0;
         e_i = 0;
+        k_times = 0;
+        data_offset.resize(12);
+        data_filtered.resize(12);
+        for (int i = 0; i < 12; i++){
+          data_offset.at(i) = 0;
+          data_filtered.at(i) = 0;
+        }
         drvHandL.view(ipwm);
         drvHandL.view(imod);
+
         // myfile.open ("data.txt", ios::out);
         return true;
     }
@@ -254,13 +304,17 @@ public:
         }else if (cmd == "set_reference"){
             dt = command.get(1).asFloat32();
             ref = command.get(2).asInt32();
-            r_ = command.get(3).asInt32();
+            // r_ = command.get(3).asInt32();
             t0 = Time::now();
             e_i = 0;
+            r_ = r;
             setState(State::reference);
             reply.addString("Done");
         }else if (cmd == "pause"){
           setState(State::idle);
+        }else if (cmd == "homeIndex"){
+            setState(State::home_index);
+            reply.addString("Done");
         }else if (cmd == "stop"){
           emerStop = 1;
           yInfo() << "Stop has been pressed";
@@ -270,6 +324,7 @@ public:
         }else if (cmd == "set_closedloop"){
           setState(State::prepare);
           reply.addString("Done");
+
         }else if(cmd == "start"){
           emerStop = 0;
           setState(State::ready);
@@ -318,12 +373,13 @@ public:
           yInfo() << "Pause...";
         }else if (localState == State::prepare){
           yInfo() << "Setting parameters for closed loop control";
-          // IControlMode     *imod;
-
-
           int j = 11;
           imod->setControlMode(j, VOCAB_CM_PWM);
           setState(State::ready);
+        }else if (localState == State::home_index){
+          yInfo() << "Going home";
+          if(index_home())
+            setState(State::ready);
         }else{
           yInfo() << "Nothing";
         }
