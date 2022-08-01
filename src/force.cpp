@@ -45,7 +45,8 @@ protected:
     IControlLimits   *ilim;
     IControlMode     *imod;
     IPositionControl *ipos;
-    double trajectory_time, period, dt;
+    IEncoders        *ienc;
+    double trajectory_time, period, dt, ang_thr;
     vector<double> xL, data, data_offset, data_filtered;
     double t0 = Time::now();
     bool cartesian;
@@ -169,20 +170,21 @@ protected:
         for (size_t i = 0; i < 12; i++){
 
           if (k_times < 50){
-            data.at(i) = abs(255 - (*tactData)[i]);
+            data.at(i) = abs(255 - (*tactData)[36+i]);
             data_offset.at(i) += data.at(i);
           }else{
-            data.at(i) = abs(255 - (*tactData)[i]) - data_offset.at(i)/50;
+            data.at(i) = abs(255 - (*tactData)[36+i]) - data_offset.at(i)/50;
           }
         }
         k_times++;
       }
       if (!data.empty()){
         // cout << "Some";
-        data_filtered = lowPass(data, data_filtered);
+        // data_filtered = lowPass(data, data_filtered);
         // mean = reduce(data.begin(), data.end()) / data.size();
         if (mean_mod == 0){
-          mean = (data_filtered[1] + data_filtered[6]) + 0.5*(data_filtered[9] + data_filtered[8] + data_filtered[10]) + 0.25*(data_filtered[0] + data_filtered[7] + data_filtered[2] + data_filtered[5]);
+          // mean = (data_filtered[1] + data_filtered[6]) + 0.5*(data_filtered[9] + data_filtered[8] + data_filtered[10]) + 0.25*(data_filtered[0] + data_filtered[7] + data_filtered[2] + data_filtered[5]);
+          mean = (data[1] + data[6]) + 0.5*(data[9] + data[8] + data[10]) + 0.25*(data[0] + data[7] + data[2] + data[5]);
           mean = mean / 4.5;
           mean = mean/100 * 255;
         }else if(mean_mod == 1){
@@ -239,6 +241,7 @@ public:
         scale = rf.check("scale", Value(1)).asInt32();
         aw_enabled = rf.check("aw_enabled", Value(1)).asInt32();
         mean_mod = rf.check("mean_mod", Value(0)).asInt32();
+        ang_thr = rf.check("ang_thr", Value(45.0)).asFloat32();
 
         if(!openHand(robot, "left_arm"))
             return false;
@@ -264,7 +267,7 @@ public:
         }
         drvHandL.view(ipwm);
         drvHandL.view(imod);
-
+        drvHandL.view(ienc);
         // myfile.open ("data.txt", ios::out);
         return true;
     }
@@ -281,6 +284,14 @@ public:
 
         int j = 11;
         imod->setControlMode(j, VOCAB_CM_POSITION);
+        double target = 0;
+        drvHandL.view(ipos);
+        ipos->positionMove(j, target);
+        bool done = false;
+        while (!done){
+            std::this_thread::sleep_for(0.1s);;
+            ipos->checkMotionDone(&done);
+        }
         drvHandL.close();
         rpcPort.close();
         // myfile.close();
@@ -348,6 +359,7 @@ public:
     bool updateModule()
     {
       if (!emerStop){
+
         // std::chrono::steady_clock::time_point a = std::chrono::steady_clock::now();
         // Timer clock; // Timer<milliseconds, steady_clock>
         //
@@ -361,14 +373,16 @@ public:
         data[2] = target;
         dataPort.write();
         State localState = getState();
+        int joint = 11;
+        double enc;
+        ienc->getEncoder(joint, &enc);
+        if (enc > ang_thr){
+          setState(State::home_index);
+        }
         if (localState == State::ready){
           // yInfo() << "At your service...";
         }else if (localState == State::reference){
             closedLoop(t0);
-            // fprintf(stdout, "Time: %f s; r: %f \n", (Time::now()-t0), r);
-            // if (Time::now - t0 > dt){
-            //   setState(State::idle);
-            // }
         }else if (localState == State::idle){
           yInfo() << "Pause...";
         }else if (localState == State::prepare){
