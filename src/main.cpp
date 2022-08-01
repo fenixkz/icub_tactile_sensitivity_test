@@ -38,10 +38,11 @@ protected:
     IControlMode     *imod;
     IPositionControl *ipos;
     vector<double> poseR, poseL, up_left, homeR, homeL, homeT, fingers_target, fingers_joint;
-    double trajectory_time, period, ampl, w;
+    double trajectory_time, period, ampl, w, desired_x, desired_y, desired_z;
     void *IControl;
     double t0 = Time::now();
     double tS = Time::now();
+    BufferedPort<yarp::sig::Vector> dataPort, dataPort1;
     bool cartesian;
     /***************************************************/
     void approachBox()
@@ -97,6 +98,7 @@ protected:
       iarm->goToPose(xg,od);
       // snprintf( buffer, sizeof(buffer), "xG: %f\n", xg[2]);
       // myfile << buffer;
+      desired_x = xg[0]; desired_y = xg[1]; desired_z = xg[2];
       return true;
     }
 
@@ -525,7 +527,10 @@ public:
         rpcPort.open("/service");
         attach(rpcPort);
         state = State::ready;
+        dataPort.open("/handPoseActual");
+        dataPort1.open("/handPoseDesired");
         emerStop = 0;
+        desired_x = 0; desired_y = 0; desired_z = 0;
         return true;
     }
 
@@ -615,6 +620,21 @@ public:
     bool updateModule()
     {
         if (!emerStop){
+          yarp::sig::Vector& data = dataPort.prepare();
+          data.resize(3);
+          data[0] = desired_x;
+          data[1] = desired_y;
+          data[2] = desired_z;
+          dataPort.write();
+          Vector x,o;
+          drvArmL.view(iarm);
+          iarm->getPose(x,o);
+          data = dataPort1.prepare();
+          data.resize(3);
+          data[0] = x[0];
+          data[1] = x[1];
+          data[2] = x[2];
+          dataPort1.write();
           State localState = getState();
           if (localState == State::goRight){
             yInfo() << "Approaching the box";
